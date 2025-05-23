@@ -23,23 +23,7 @@ class OllamaClient:
     def __init__(self, model="devstral", base_url=None):
         self.model = model
         if base_url is None:
-            # Try to detect WSL2 and use Windows host IP
-            try:
-                import subprocess
-                result = subprocess.run(['cat', '/proc/version'], capture_output=True, text=True)
-                if 'microsoft' in result.stdout.lower() or 'wsl' in result.stdout.lower():
-                    # We're in WSL2, get the Windows host IP
-                    result = subprocess.run(['cat', '/etc/resolv.conf'], capture_output=True, text=True)
-                    for line in result.stdout.split('\n'):
-                        if line.startswith('nameserver'):
-                            host_ip = line.split()[1]
-                            base_url = f"http://{host_ip}:11434"
-                            print(f"Detected WSL2, using Windows host IP: {host_ip}")
-                            break
-                if base_url is None:
-                    base_url = "http://localhost:11434"
-            except:
-                base_url = "http://localhost:11434"
+            base_url = "http://localhost:11434"
         self.base_url = base_url
     
     def test_connection(self) -> bool:
