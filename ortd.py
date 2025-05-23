@@ -15,6 +15,13 @@ from typing import List, Dict, Tuple, Optional
 from collections import deque
 import requests
 import json
+import time
+from rich.console import Console
+from rich.text import Text
+from rich.live import Live
+from rich.table import Table
+
+console = Console()
 
 
 class OllamaClient:
@@ -247,9 +254,40 @@ class TrainingDataGenerator:
         self.tools = ToolSystem(repo_path)
         self.question_queue = deque()
         self.analyzer = CodeAnalyzer()
+
+        self.start_time = time.time()
+        self.files_processed_count = 0
+        self.training_files_created_count = 0
         
         # Ensure output directory exists
         os.makedirs("training_data", exist_ok=True)
+
+    def _generate_status_table(self) -> Table:
+        """Generates a Rich Table object for status display."""
+        elapsed_seconds = time.time() - self.start_time
+        
+        # Format elapsed time
+        hours, rem = divmod(elapsed_seconds, 3600)
+        minutes, seconds = divmod(rem, 60)
+        elapsed_time_str = f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
+        
+        # Calculate files per hour
+        if elapsed_seconds < 1:
+            files_per_hour_str = "Calculating..."
+        else:
+            files_per_hour = (self.files_processed_count / elapsed_seconds) * 3600
+            files_per_hour_str = f"{files_per_hour:.2f} files/hr"
+            
+        table = Table(show_header=False, show_edge=False, pad_edge=False)
+        table.add_column("Metric", style="dim", width=7)
+        table.add_column("Value")
+
+        table.add_row("⏱️ Time", elapsed_time_str)
+        table.add_row("📂 Files", str(self.files_processed_count))
+        table.add_row("🚀 Speed", files_per_hour_str)
+        table.add_row("💾 Trained", str(self.training_files_created_count))
+        
+        return table
     
     def generate_random_filename(self) -> str:
         """Generate random training data filename"""
@@ -260,6 +298,8 @@ class TrainingDataGenerator:
         filename = self.generate_random_filename()
         with open(filename, 'w', encoding='utf-8') as f:
             f.write(content)
+        console.print(f"Created training data: [green]{filename}[/green]")
+        self.training_files_created_count += 1
         return filename
     
     def generate_hypothetical_questions(self, file_path: str, content: str) -> List[str]:
@@ -324,7 +364,8 @@ Provide a detailed answer with code snippets and explanations. Include business 
     def process_file(self, file_path: Path):
         """Process a single source file"""
         rel_path = file_path.relative_to(self.repo_path)
-        print(f"Processing: {rel_path}")
+        console.print(f"Processing: [bold blue]{rel_path}[/bold blue]")
+        self.files_processed_count += 1
         
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -346,7 +387,6 @@ This file contains the complete implementation with all functions, imports, and 
 """
         
         filename = self.save_training_data(whole_file_content)
-        print(f"Created whole file training data: {filename}")
         
         # Extract functions
         if file_path.suffix == '.py':
@@ -370,7 +410,6 @@ This function is part of the larger codebase and implements specific business lo
 """
             
             filename = self.save_training_data(func_content)
-            print(f"Created function training data: {filename}")
         
         # Generate hypothetical questions and queue them
         questions = self.generate_hypothetical_questions(str(rel_path), content)
@@ -379,13 +418,14 @@ This function is part of the larger codebase and implements specific business lo
         
         print(f"Queued {len(questions)} questions for {rel_path}")
     
-    def process_questions(self):
+    def process_questions(self, live: Live):
         """Process all queued questions (breadth-first)"""
-        print(f"\nProcessing {len(self.question_queue)} questions...")
+        console.print(f"\n[bold]Processing {len(self.question_queue)} queued questions...[/bold]")
         
+        processed_questions_count = 0
         while self.question_queue:
             question, file_path, content = self.question_queue.popleft()
-            print(f"Answering: {question[:60]}...")
+            console.print(f"Answering Q{processed_questions_count+1}: {question[:60]}...")
             
             answer = self.answer_question_with_tools(question, file_path, content)
             
@@ -399,32 +439,39 @@ This answer includes code analysis and business logic explanations based on the 
 """
             
             filename = self.save_training_data(qa_content)
-            print(f"Created Q&A training data: {filename}")
+            processed_questions_count += 1
+            live.update(self._generate_status_table())
     
     def run(self):
         """Main processing loop"""
         if not self.repo_path.exists():
-            print(f"Error: Repository path {self.repo_path} does not exist")
+            console.print(f"[bold red]Error: Repository path {self.repo_path} does not exist[/bold red]")
             return
         
-        print(f"Processing repository: {self.repo_path}")
-        print(f"Preamble: {self.preamble}")
+        console.print(f"[bold]Processing repository:[/bold] {self.repo_path}")
+        console.print(f"[bold]Preamble:[/bold] {self.preamble}")
         
         # Find all source files
         source_files = []
         for ext in ['.py', '.go']:
             source_files.extend(self.repo_path.rglob(f"*{ext}"))
         
-        print(f"Found {len(source_files)} source files")
+        console.print(f"Found {len(source_files)} source files to process.")
         
-        # Process each file
-        for file_path in source_files:
-            self.process_file(file_path)
+        with Live(self._generate_status_table(), refresh_per_second=4, console=console) as live:
+            # Process each file
+            for file_path in source_files:
+                self.process_file(file_path)
+                live.update(self._generate_status_table())
+            
+            # Process all questions
+            self.process_questions(live)
         
-        # Process all questions
-        self.process_questions()
-        
-        print(f"\nCompleted! Generated training data files in training_data/ directory")
+        # Explicitly print final statistics after Live context
+        final_stats = self._generate_status_table()
+        console.print("\n[bold]Final Statistics:[/bold]")
+        console.print(final_stats)
+        console.print(f"\n[bold green]Processing Complete![/bold green] Generated {self.training_files_created_count} training data files in training_data/ directory.")
 
 
 def test_ollama():
